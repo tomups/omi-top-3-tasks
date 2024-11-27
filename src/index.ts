@@ -1,46 +1,22 @@
 import { Memory, TranscriptSegment, TranscriptSession } from "./interfaces";
 import { AzureOpenAI } from 'openai';
 
-let openai: AzureOpenAI;
-let env: Env;
-
-async function init(newEnv: Env) {
-	env = newEnv;
-	openai = openai || new AzureOpenAI({
-		apiKey: env.OPENAI_API_KEY,
-		apiVersion: '2024-10-01-preview',
-		endpoint: 'https://chimnie.openai.azure.com/',
-		deployment: 'gpt-4o',
-	});
-}
-
-async function getAllTasks(uid: string) {
-	const currentTasksStmt = await env.DB.prepare(
-		`SELECT tasks FROM all_tasks WHERE user_id = ?`
-	);
-	const currentTasksResult = await currentTasksStmt.bind(uid).first();
-	return currentTasksResult?.tasks as string || 'No tasks.';
-}
-
-async function processMemory(memory: Memory, uid: string) {
-	const currentTasks = await getAllTasks(uid);
-	const fullTranscript = memory.transcript_segments.map(segment => segment.text).join(' ');
-
-	const completion = await openai.chat.completions.create({
-		messages: [
-			{
-				role: "system",
-				content: `You are an AI assistant. Your task is to update a list of tasks based on a given list of existing tasks and a transcript of a user's voice input. The voice input may contain new tasks or information about the existing tasks, such as their completion status. Your goal is to generate an updated list of tasks, ordered by importance, with a focus on improving the user's personal productivity and life satisfaction, ensuring they remain productive without getting burned out.
+const systemPrompt = `You are an AI assistant.
+Your task is to update a list of tasks based on a given list of existing tasks and a transcript of a user's voice input.
+The voice input may contain new tasks or information about the existing tasks, such as their completion status.
+Your goal is to generate an updated list of tasks, ordered by importance, with a focus on improving the user's personal productivity and life satisfaction, ensuring they remain productive without getting burned out.
 
 Here are the steps you should follow:
 
 1. **Review the Existing Tasks:** Start by examining the provided list of existing tasks.
 2. **Analyze the Transcript:** Carefully read through the transcript to identify any new tasks or updates to existing tasks.
 3. **Update the Task List:**
-   - If a task is marked as completed in the transcript, remove it from the list.
-   - If a new task is mentioned, add it to the list.
-   - If there are updates to the importance or details of existing tasks, modify them accordingly.
-4. **Order by Importance:** Arrange the tasks in order of importance, with the most important tasks at the top. Prioritize tasks that contribute to the user's personal productivity and life satisfaction, and ensure a balance to prevent burnout.
+  - If a task is marked as completed in the transcript, remove it from the list.
+  - If a new task is mentioned, add it to the list.
+  - If there are updates to the importance or details of existing tasks, modify them accordingly.
+4. **Order by Importance:**
+  - Arrange the tasks in order of importance, with the most important tasks at the top.
+  - Prioritize tasks that contribute to the user's personal productivity and life satisfaction, and ensure a balance to prevent burnout.
 5. **Output the Updated List:** Provide the updated list of tasks as a numbered list, with each task on a new line.
 
 **Edge Cases to Consider:**
@@ -73,7 +49,38 @@ Here are the steps you should follow:
 4. Go for a run
 5. Read a book
 
-**Your task is to follow these instructions and generate the updated list of tasks.**`
+**Your task is to follow these instructions and generate the updated list of tasks. Do not include any additional text or explanations, only the final numbered list of tasks.**`
+
+let openai: AzureOpenAI;
+let env: Env;
+
+async function init(newEnv: Env) {
+	env = newEnv;
+	openai = openai || new AzureOpenAI({
+		apiKey: env.OPENAI_API_KEY,
+		apiVersion: '2024-10-01-preview',
+		endpoint: 'https://chimnie.openai.azure.com/',
+		deployment: 'gpt-4o',
+	});
+}
+
+async function getAllTasks(uid: string) {
+	const currentTasksStmt = await env.DB.prepare(
+		`SELECT tasks FROM all_tasks WHERE user_id = ?`
+	);
+	const currentTasksResult = await currentTasksStmt.bind(uid).first();
+	return currentTasksResult?.tasks as string || 'No tasks.';
+}
+
+async function processMemory(memory: Memory, uid: string) {
+	const currentTasks = await getAllTasks(uid);
+	const fullTranscript = memory.transcript_segments.map(segment => segment.text).join(' ');
+
+	const completion = await openai.chat.completions.create({
+		messages: [
+			{
+				role: "system",
+				content: systemPrompt
 			},
 			{
 				role: "user",
@@ -83,7 +90,54 @@ Here are the steps you should follow:
 		model: 'gpt-4o',
 	});
 
-	const extractedTasks = completion.choices[0].message.content;
+	let extractedTasks = completion.choices[0].message.content;
+
+	// Validate that the response is a numbered list
+	let validResponse = false;
+	let attempts = 0;
+	const maxAttempts = 5;
+
+	while (!extractedTasks || !validResponse && attempts < maxAttempts) {
+		// Check if each line starts with a number
+		const lines = extractedTasks?.trim().split('\n') || [''];
+		validResponse = lines.every(line => /^\d+\./.test(line.trim()));
+
+		if (!validResponse) {
+			attempts++;
+
+			// Try again with a more explicit prompt
+			const retryCompletion = await openai.chat.completions.create({
+				messages: [
+					{
+						role: "system",
+						content: systemPrompt
+					},
+					{
+						role: "user",
+						content: `**Existing Tasks:**\n${currentTasks}\n\n**Transcript:**\n"${fullTranscript}"`
+					},
+					{
+						role: "assistant",
+						content: extractedTasks
+					},
+					{
+						role: "user",
+						content: "Previous response was invalid. Please provide ONLY a numbered list where each line starts with a number followed by a period."
+					}
+				],
+				model: 'gpt-4o',
+			});
+
+			extractedTasks = retryCompletion.choices[0].message.content;
+		}
+	}
+
+	if (!validResponse) {
+    // if the LLM really doesn't cooperate after 5 tries, just give up ¯\_(ツ)_/¯
+		return Response.json({
+			status: 'success'
+		});
+	}
 
 	// Only save if tasks have changed
 	if (extractedTasks !== currentTasks) {
@@ -105,7 +159,7 @@ Here are the steps you should follow:
 
 		if (newlyAddedTasks.length > 0) {
 			return Response.json({
-				message: `New tasks added:\n${newlyAddedTasks.map(task => `- ${task}`).join('\n')}.\n\nAsk tomorrow for your new 3 TOP tasks!`
+				message: `New task${newlyAddedTasks.length > 1 ? 's' : ''} added:\n${newlyAddedTasks.map(task => `- ${task}`).join('\n')}.\n\nAsk tomorrow for your new 3 TOP tasks!`
 			});
 		}
 	}
