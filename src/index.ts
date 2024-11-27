@@ -14,7 +14,7 @@ async function init(newEnv: Env) {
 	});
 }
 
-async function getAllTasks(uid: string) {	
+async function getAllTasks(uid: string) {
 	const currentTasksStmt = await env.DB.prepare(
 		`SELECT tasks FROM all_tasks WHERE user_id = ?`
 	);
@@ -22,14 +22,14 @@ async function getAllTasks(uid: string) {
 	return currentTasksResult?.tasks as string || 'No tasks.';
 }
 
-async function processMemory(memory: Memory, uid: string) {	
+async function processMemory(memory: Memory, uid: string) {
 	const currentTasks = await getAllTasks(uid);
 	const fullTranscript = memory.transcript_segments.map(segment => segment.text).join(' ');
 
 	const completion = await openai.chat.completions.create({
 		messages: [
 			{
-				role: "system", 
+				role: "system",
 				content: `You are an AI assistant. Your task is to update a list of tasks based on a given list of existing tasks and a transcript of a user's voice input. The voice input may contain new tasks or information about the existing tasks, such as their completion status. Your goal is to generate an updated list of tasks, ordered by importance, with a focus on improving the user's personal productivity and life satisfaction, ensuring they remain productive without getting burned out.
 
 Here are the steps you should follow:
@@ -81,17 +81,17 @@ Here are the steps you should follow:
 			}
 		],
 		model: 'gpt-4o',
-	});	
+	});
 
 	const extractedTasks = completion.choices[0].message.content;
 
 	// Only save if tasks have changed
 	if (extractedTasks !== currentTasks) {
 		const stmt = await env.DB.prepare(
-			`INSERT INTO all_tasks (user_id, tasks) 
+			`INSERT INTO all_tasks (user_id, tasks)
 		VALUES (?, ?)
 		ON CONFLICT(user_id) DO UPDATE SET
-		tasks = excluded.tasks,				
+		tasks = excluded.tasks,
 		updated_at = CURRENT_TIMESTAMP`
 		);
 		await stmt.bind(uid, extractedTasks).run();
@@ -107,7 +107,7 @@ Here are the steps you should follow:
 			return Response.json({
 				message: `New tasks added:\n${newlyAddedTasks.map(task => `- ${task}`).join('\n')}.\n\nAsk tomorrow for your new 3 TOP tasks!`
 			});
-		}		
+		}
 	}
 
 	// if no changes in tasks, just return
@@ -116,23 +116,23 @@ Here are the steps you should follow:
 	});
 }
 
-async function processRealTimeTranscripts(transcripts: TranscriptSegment[], uid: string) {	
+async function processRealTimeTranscripts(transcripts: TranscriptSegment[], uid: string) {
 	const fullTranscript = transcripts.map(segment => segment.text).join(' ');
 
 	if (fullTranscript.toLowerCase().includes("3 tasks") ||
 		fullTranscript.toLowerCase().includes("three tasks")) {
-		
+
 		let top3Tasks: string[] = [];
 		const currentTop3TasksStmt = await env.DB.prepare(
 			`SELECT tasks, updated_at FROM todays_tasks WHERE user_id = ?`
 		);
 		const currentTop3TasksResult = await currentTop3TasksStmt.bind(uid).first<{ tasks: string, updated_at: string }>();
-		
-		// Check if tasks need to be updated (no entry or last updated yesterday or earlier)		
-		const needsUpdate = !currentTop3TasksResult || 
+
+		// Check if tasks need to be updated (no entry or last updated yesterday or earlier)
+		const needsUpdate = !currentTop3TasksResult ||
 			new Date(currentTop3TasksResult.updated_at).getTime() < new Date().setHours(0, 0, 0, 0);
-		
-		if (needsUpdate) {			
+
+		if (needsUpdate) {
 			const allTasks = await getAllTasks(uid);
 
 			if (!allTasks.length || allTasks.includes('No tasks')) {
@@ -141,15 +141,15 @@ async function processRealTimeTranscripts(transcripts: TranscriptSegment[], uid:
 				});
 			}
 
-			top3Tasks = allTasks?.split('\n').slice(0, 3) || [];			
+			top3Tasks = allTasks?.split('\n').slice(0, 3) || [];
 
 			const stmt = await env.DB.prepare(
-				`INSERT INTO todays_tasks (user_id, tasks) 
+				`INSERT INTO todays_tasks (user_id, tasks)
 				VALUES (?, ?)
 				ON CONFLICT(user_id) DO UPDATE SET
 				tasks = excluded.tasks,
 				updated_at = CURRENT_TIMESTAMP`
-			);			
+			);
 			await stmt.bind(uid, top3Tasks.join('\n')).run();
 		}
 
@@ -194,17 +194,17 @@ export default {
 
 		//console.log('Recieved request', content);
 
-		try {			
+		try {
 			const url = new URL(request.url);
 			const uid = url.searchParams.get('uid');
 			if (!uid) {
 				throw new Error('User ID is required');
-			}			
-			
-			if ('session_id' in content) {				
-				return processRealTimeTranscripts(content.segments, uid);			
-			} else if ('status' in content && content.status == 'completed') {								
-				return processMemory(content, uid);				
+			}
+
+			if ('session_id' in content) {
+				return processRealTimeTranscripts(content.segments, uid);
+			} else if ('status' in content && content.status == 'completed') {
+				return processMemory(content, uid);
 			}
 		} catch (error) {
 			return Response.json({
