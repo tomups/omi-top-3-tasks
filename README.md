@@ -1,5 +1,9 @@
 # TOP 3 Tasks - Omi App
 
+<p align="center">
+<img src="https://github.com/user-attachments/assets/9edef2f1-27af-43dc-a1a8-b4c5c2a289e5" />
+</p>
+
 An app for the [Omi open source AI wearable](https://omi.me) that helps you stay focused and productive by managing your daily tasks effectively.
 
 ## Overview
