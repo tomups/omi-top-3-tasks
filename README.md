@@ -6,6 +6,8 @@
 
 An app for the [Omi open source AI wearable](https://omi.me) that helps you stay focused and productive by managing your daily tasks effectively.
 
+https://h.omi.me/apps/top-3-tasks-01JDJ7HTX3Z35HTXR6N29JKJC5
+
 ## Overview
 
 TOP 3 Tasks keeps you focused on what truly matters. Simply share your tasks with Omi throughout the day, and when you say "show my TOP 3 tasks", you'll receive your most important priorities. This proven method helps you stay productive without feeling overwhelmed.
